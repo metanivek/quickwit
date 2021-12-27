@@ -26,6 +26,7 @@ use std::ops::Range;
 
 use async_trait::async_trait;
 pub use index_metadata::IndexMetadata;
+use quickwit_config::SourceConfig;
 use quickwit_index_config::tag_pruning::TagFilterAst;
 
 use crate::checkpoint::CheckpointDelta;
@@ -151,6 +152,14 @@ pub trait Metastore: Send + Sync + 'static {
     /// storage.
     async fn delete_splits<'a>(&self, index_id: &str, split_ids: &[&'a str])
         -> MetastoreResult<()>;
+
+    /// Adds a new source. Fails with [`MetastoreError::SourceAlreadyExists`] if a source with the
+    /// same ID is already defined for the index.
+    async fn add_source(&self, index_id: &str, source: SourceConfig) -> MetastoreResult<()>;
+
+    /// Deletes a source. Fails with [`MetastoreError::SourceDoesNotExist`] if the specified source
+    /// does not exist.
+    async fn delete_source(&self, index_id: &str, source_id: &str) -> MetastoreResult<()>;
 
     /// Returns the Metastore uri.
     fn uri(&self) -> String;
