@@ -29,16 +29,16 @@ use quickwit_proto::{
     LeafSearchRequest, LeafSearchResponse, ListTermsRequest, ListTermsResponse, PartialHit,
     SearchRequest, SearchResponse, SplitIdAndFooterOffsets,
 };
-use tantivy::aggregation::agg_req::Aggregations;
 use tantivy::aggregation::agg_result::AggregationResults;
 use tantivy::aggregation::intermediate_agg_result::IntermediateAggregationResults;
-use tantivy::collector::Collector;
+use tantivy::collector::{Collector, SegmentCollector};
 use tantivy::TantivyError;
 use tokio::task::spawn_blocking;
 use tracing::{debug, error, instrument};
 
 use crate::cluster_client::ClusterClient;
-use crate::collector::make_merge_collector;
+use crate::collector::{make_merge_collector, QuickwitAggregations};
+use crate::jaeger_collector::FindTraceIdsCollector;
 use crate::search_job_placer::Job;
 use crate::{
     extract_split_and_footer_offsets, list_relevant_splits, SearchError, SearchJobPlacer,
@@ -113,7 +113,7 @@ impl From<FetchDocsJob> for SplitIdAndFooterOffsets {
 
 pub(crate) fn validate_request(search_request: &SearchRequest) -> crate::Result<()> {
     if let Some(agg) = search_request.aggregation_request.as_ref() {
-        let _agg: Aggregations = serde_json::from_str(agg)
+        let _aggs: QuickwitAggregations = serde_json::from_str(agg)
             .map_err(|err| SearchError::InvalidAggregationRequest(err.to_string()))?;
     };
 
@@ -202,6 +202,7 @@ pub async fn root_search(
 
     // Creates a collector which merges responses into one
     let merge_collector = make_merge_collector(search_request)?;
+    let aggregations = merge_collector.aggregation.clone();
 
     // Merging is a cpu-bound task.
     // It should be executed by Tokio's blocking threads.
@@ -293,11 +294,24 @@ pub async fn root_search(
     let aggregation = if let Some(intermediate_aggregation_result) =
         leaf_search_response.intermediate_aggregation_result
     {
-        let res: IntermediateAggregationResults =
-            serde_json::from_str(&intermediate_aggregation_result)?;
-        let req: Aggregations = serde_json::from_str(search_request.aggregation_request())?;
-        let res: AggregationResults = res.into_final_bucket_result(req, &doc_mapper.schema())?;
-        Some(serde_json::to_string(&res)?)
+        match aggregations.expect(
+            "Aggregation should be present since we have an intermediate aggregation result.",
+        ) {
+            QuickwitAggregations::FindTraceIdsAggregation(collector) => {
+                let fruits: Vec<
+                    <<FindTraceIdsCollector as Collector>::Child as SegmentCollector>::Fruit,
+                > = serde_json::from_str(&intermediate_aggregation_result)?;
+                let merged_fruit = collector.merge_fruits(fruits)?;
+                Some(serde_json::to_string(&merged_fruit)?)
+            }
+            QuickwitAggregations::TantivyAggregations(aggregations) => {
+                let res: IntermediateAggregationResults =
+                    serde_json::from_str(&intermediate_aggregation_result)?;
+                let res: AggregationResults =
+                    res.into_final_bucket_result(aggregations, &doc_mapper.schema())?;
+                Some(serde_json::to_string(&res)?)
+            }
+        }
     } else {
         None
     };
@@ -1474,7 +1488,7 @@ mod tests {
         assert_eq!(
             search_response.unwrap_err().to_string(),
             "Invalid aggregation request: data did not match any variant of untagged enum \
-             Aggregation at line 18 column 13",
+             QuickwitAggregations",
         );
         Ok(())
     }

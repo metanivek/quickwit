@@ -20,6 +20,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use assert_json_diff::{assert_json_eq, assert_json_include};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use quickwit_config::SearcherConfig;
 use quickwit_doc_mapper::DefaultDocMapper;
 use quickwit_indexing::TestSandbox;
@@ -30,6 +32,7 @@ use tantivy::time::OffsetDateTime;
 use tantivy::Term;
 
 use super::*;
+use crate::jaeger_collector::TraceIdSpanTimestamp;
 use crate::single_node_search;
 
 #[tokio::test]
@@ -1412,6 +1415,72 @@ async fn test_single_node_list_terms() -> anyhow::Result<()> {
         .unwrap();
         let terms = collect_str_terms(search_response);
         assert_eq!(terms, &["beagle"]);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_single_node_find_trace_ids_collector() -> anyhow::Result<()> {
+    let index_id = "single-node-find-trace-ids-collector";
+    let doc_mapping_yaml = r#"
+            field_mappings:
+              - name: trace_id
+                type: text
+                tokenizer: raw
+                fast: true
+              - name: span_timestamp_secs
+                type: datetime
+                fast: true
+                precision: seconds
+        "#;
+    let docs = vec![
+        json!({"trace_id": "foo", "span_timestamp_secs": "2023-01-10T15:13:35Z"}),
+        json!({"trace_id": "foo", "span_timestamp_secs": "2023-01-10T15:13:36Z"}),
+        json!({"trace_id": "foo", "span_timestamp_secs": "2023-01-10T15:13:37Z"}),
+        json!({"trace_id": "foo", "span_timestamp_secs": "2023-01-10T15:13:38Z"}),
+        json!({"trace_id": "foo", "span_timestamp_secs": "2023-01-10T15:13:39Z"}),
+        json!({"trace_id": "foo", "span_timestamp_secs": "2023-01-10T15:13:40Z"}),
+        json!({"trace_id": "bar", "span_timestamp_secs": "2024-01-10T15:13:35Z"}),
+        json!({"trace_id": "bar", "span_timestamp_secs": "2024-01-10T15:13:40Z"}),
+        json!({"trace_id": "qux", "span_timestamp_secs": "2025-01-10T15:13:40Z"}),
+        json!({"trace_id": "qux", "span_timestamp_secs": "2025-01-10T15:13:35Z"}),
+    ];
+    let test_sandbox = TestSandbox::create(index_id, doc_mapping_yaml, "{}", &[]).await?;
+    test_sandbox.add_documents(docs).await?;
+    {
+        let aggregations = r#"{
+            "num_traces": 5,
+            "trace_id_field_name": "trace_id",
+            "span_timestamp_field_name": "span_timestamp_secs"
+        }"#
+        .to_string();
+
+        let search_request = SearchRequest {
+            index_id: index_id.to_string(),
+            query: "*".to_string(),
+            aggregation_request: Some(aggregations),
+            search_fields: Vec::new(),
+            start_timestamp: None,
+            end_timestamp: None,
+            max_hits: 0,
+            start_offset: 0,
+            ..Default::default()
+        };
+        let single_node_result = single_node_search(
+            &search_request,
+            &*test_sandbox.metastore(),
+            test_sandbox.storage_uri_resolver(),
+        )
+        .await?;
+        let aggregation = single_node_result.aggregation.unwrap();
+        let trace_ids: Vec<TraceIdSpanTimestamp> = serde_json::from_str(&aggregation).unwrap();
+        assert_eq!(trace_ids.len(), 3);
+        assert_eq!(trace_ids[0].trace_id, BASE64_STANDARD.encode(b"foo"));
+        assert_eq!(trace_ids[0].span_timestamp, 1673363620000000);
+        assert_eq!(trace_ids[1].trace_id, BASE64_STANDARD.encode(b"bar"));
+        assert_eq!(trace_ids[1].span_timestamp, 1704899620000000);
+        assert_eq!(trace_ids[2].trace_id, BASE64_STANDARD.encode(b"qux"));
+        assert_eq!(trace_ids[2].span_timestamp, 1736522020000000);
     }
     Ok(())
 }
