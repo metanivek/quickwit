@@ -42,34 +42,35 @@ use crate::partial_hit_sorting_key;
 #[derive(Clone, Debug)]
 pub(crate) enum SortBy {
     DocId,
-    FastField {
-        field_name: String,
-        order: SortOrder,
+    FastFields {
+        field_names: Vec<String>,
+        sort_orders: Vec<SortOrder>,
     },
     Score {
-        order: SortOrder,
+        sort_order: SortOrder,
     },
 }
 
-/// The `SortingFieldComputer` can be seen as the specialization of `SortBy` applied to a specific
+/// The `SortByComputer` can be seen as the specialization of `SortBy` applied to a specific
 /// `SegmentReader`. Its role is to compute the sorting field given a `DocId`.
-enum SortingFieldComputer {
+enum SortByComputer {
     /// If undefined, we simply sort by DocIds.
     DocId,
-    FastField {
-        fast_field_reader: Arc<dyn Column<u64>>,
-        order: SortOrder,
+    FastFields {
+        fast_field_readers: Vec<Arc<dyn Column<u64>>>,
+        sort_orders: Vec<SortOrder>,
     },
     Score {
-        order: SortOrder,
+        sort_order: SortOrder,
     },
 }
 
-impl SortingFieldComputer {
+impl SortByComputer {
     /// Returns the ranking key for the given element
-    fn compute_sorting_field(&self, doc_id: DocId, score: Score) -> u64 {
+    fn compute_sort_key(&self, doc_id: DocId, score: Score) -> u64 {
         match self {
-            SortingFieldComputer::FastField {
+            SortByComputer::DocId => 0u64,
+            SortByComputer::FastFields {
                 fast_field_reader,
                 order,
             } => {
@@ -82,8 +83,7 @@ impl SortingFieldComputer {
                     SortOrder::Asc => u64::MAX - field_val,
                 }
             }
-            SortingFieldComputer::DocId => 0u64,
-            SortingFieldComputer::Score { order } => {
+            SortByComputer::Score { order } => {
                 let u64_score = f32_to_u64(score);
                 match order {
                     SortOrder::Desc => u64_score,
@@ -108,17 +108,17 @@ fn f32_to_u64(value: f32) -> u64 {
 fn resolve_sort_by(
     sort_by: &SortBy,
     segment_reader: &SegmentReader,
-) -> tantivy::Result<SortingFieldComputer> {
+) -> tantivy::Result<SortByComputer> {
     match sort_by {
-        SortBy::DocId => Ok(SortingFieldComputer::DocId),
+        SortBy::DocId => Ok(SortByComputer::DocId),
         SortBy::FastField { field_name, order } => {
             let fast_field_reader = segment_reader.fast_fields().u64_lenient(field_name)?;
-            Ok(SortingFieldComputer::FastField {
+            Ok(SortByComputer::FastField {
                 fast_field_reader,
                 order: *order,
             })
         }
-        SortBy::Score { order } => Ok(SortingFieldComputer::Score { order: *order }),
+        SortBy::Score { order } => Ok(SortByComputer::Score { order: *order }),
     }
 }
 
@@ -139,19 +139,9 @@ impl PartialOrd for PartialHitHeapItem {
 impl Ord for PartialHitHeapItem {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        let by_sorting_field = other
-            .sorting_field_value
-            .partial_cmp(&self.sorting_field_value)
-            .unwrap_or(Ordering::Equal);
-
-        let lazy_order_by_doc_id = || {
-            self.doc_id
-                .partial_cmp(&other.doc_id)
-                .unwrap_or(Ordering::Equal)
-        };
-
-        // In case of a tie on the feature, we sort by ascending `DocId`.
-        by_sorting_field.then_with(lazy_order_by_doc_id)
+        self.sorting_field_value
+            .cmp(&other.sorting_field_value)
+            .then(self.doc_id.cmp(&other.doc_id))
     }
 }
 
@@ -172,7 +162,7 @@ enum AggregationSegmentCollectors {
 pub struct QuickwitSegmentCollector {
     num_hits: u64,
     split_id: String,
-    sort_by: SortingFieldComputer,
+    sort_by: SortByComputer,
     hits: BinaryHeap<PartialHitHeapItem>,
     max_hits: usize,
     segment_ord: u32,
@@ -244,8 +234,7 @@ impl SegmentCollector for QuickwitSegmentCollector {
         let split_id = self.split_id;
         let partial_hits: Vec<PartialHit> = self
             .hits
-            .into_sorted_vec()
-            .into_iter()
+            .into_iter_sorted()
             .map(|hit| PartialHit {
                 sorting_field_value: hit.sorting_field_value,
                 segment_ord,

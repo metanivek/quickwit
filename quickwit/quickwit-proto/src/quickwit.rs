@@ -26,18 +26,23 @@ pub struct SearchRequest {
     /// The results with rank [start_offset..start_offset + max_hits) are returned.
     #[prost(uint64, tag = "7")]
     pub start_offset: u64,
-    /// Sort order
-    #[prost(enumeration = "SortOrder", optional, tag = "9")]
-    pub sort_order: ::core::option::Option<i32>,
-    /// Sort by fast field. If unset sort by docid
-    #[prost(string, optional, tag = "10")]
-    pub sort_by_field: ::core::option::Option<::prost::alloc::string::String>,
     /// json serialized aggregation_request
     #[prost(string, optional, tag = "11")]
     pub aggregation_request: ::core::option::Option<::prost::alloc::string::String>,
     /// Fields to extract snippet on
     #[prost(string, repeated, tag = "12")]
     pub snippet_fields: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "13")]
+    pub sort_by: ::prost::alloc::vec::Vec<SortField>,
+}
+#[derive(Serialize, Deserialize, utoipa::ToSchema)]
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SortField {
+    #[prost(string, tag = "1")]
+    pub field_name: ::prost::alloc::string::String,
+    #[prost(enumeration = "SortOrder", tag = "2")]
+    pub sort_order: i32,
 }
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[allow(clippy::derive_partial_eq_without_eq)]

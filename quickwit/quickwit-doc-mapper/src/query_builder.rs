@@ -20,7 +20,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Context};
-use quickwit_proto::SearchRequest;
+use quickwit_proto::{SearchRequest, SortField};
 use tantivy::query::{Query, QueryParser, QueryParserError as TantivyQueryParserError};
 use tantivy::schema::{Field, FieldEntry, FieldType, Schema};
 use tantivy_query_grammar::{UserInputAst, UserInputLeaf, UserInputLiteral};
@@ -55,8 +55,8 @@ pub(crate) fn build_query(
         resolve_fields(&schema, &request.search_fields)?
     };
 
-    if let Some(sort_by_field) = &request.sort_by_field {
-        validate_sort_by_field(sort_by_field, &schema, Some(&search_fields))?;
+    if !request.sort_by.is_empty() {
+        validate_sort_by(&request.sort_by, &schema, Some(&search_fields))?;
     }
 
     let mut query_parser =
@@ -252,32 +252,30 @@ fn validate_requested_snippet_fields(
     Ok(())
 }
 
-pub(crate) fn validate_sort_by_field(
-    field_name: &str,
+pub(crate) fn validate_sort_by(
+    sort_fields: &[SortField],
     schema: &Schema,
     search_fields_opt: Option<&Vec<Field>>,
 ) -> anyhow::Result<()> {
-    if field_name == "_score" {
-        return validate_sort_by_score(schema, search_fields_opt);
-    }
-    let sort_by_field = schema
-        .get_field(field_name)
-        .with_context(|| format!("Unknown sort by field: `{field_name}`"))?;
-    let sort_by_field_entry = schema.get_field_entry(sort_by_field);
+    for sort_field in sort_fields {
+        if sort_field.field_name == "_score" {
+            validate_sort_by_score(schema, search_fields_opt)?;
+            continue;
+        }
+        let field_name = &sort_field.field_name;
+        let field = schema.get_field(field_name)?;
+        let field_entry = schema.get_field_entry(field);
 
-    if matches!(sort_by_field_entry.field_type(), FieldType::Str(_)) {
-        bail!(
-            "Sort by field on type text is currently not supported `{}`.",
-            field_name
-        )
+        if matches!(field_entry.field_type(), FieldType::Str(_)) {
+            bail!(
+                "Invalid sort field `{field_name}`. Sorting by a text field is currently not \
+                 supported.",
+            )
+        }
+        if !field_entry.is_fast() {
+            bail!("Invalid sort field `{field_name}`. TODO fast: true",)
+        }
     }
-    if !sort_by_field_entry.is_fast() {
-        bail!(
-            "Sort by field must be a fast field, please add the fast property to your field `{}`.",
-            field_name
-        )
-    }
-
     Ok(())
 }
 
@@ -289,8 +287,8 @@ fn validate_sort_by_score(
         for field in fields {
             if !schema.get_field_entry(*field).has_fieldnorms() {
                 bail!(
-                    "Fieldnorms for field `{}` is missing. Fieldnorms must be stored for the \
-                     field to compute the BM25 score of the documents.",
+                    "Fieldnorms for the field `{}` are not available. Fieldnorms must be enabled \
+                     ... TODO:",
                     schema.get_field_name(*field)
                 )
             }
@@ -357,8 +355,7 @@ mod test {
             end_timestamp: None,
             max_hits: 20,
             start_offset: 0,
-            sort_order: None,
-            sort_by_field: None,
+            sort_by: Vec::new(),
         };
 
         let default_field_names =
@@ -654,8 +651,7 @@ mod test {
             end_timestamp: None,
             max_hits: 20,
             start_offset: 0,
-            sort_order: None,
-            sort_by_field: None,
+            sort_by: Vec::new(),
         };
         let user_input_ast = tantivy_query_grammar::parse_query(&request.query)
             .map_err(|_| QueryParserError::SyntaxError(request.query.clone()))
@@ -764,8 +760,7 @@ mod test {
             end_timestamp: None,
             max_hits: 20,
             start_offset: 0,
-            sort_order: None,
-            sort_by_field: None,
+            sort_by: Vec::new(),
         };
         let request_without_set = SearchRequest {
             aggregation_request: None,
@@ -777,8 +772,7 @@ mod test {
             end_timestamp: None,
             max_hits: 20,
             start_offset: 0,
-            sort_order: None,
-            sort_by_field: None,
+            sort_by: Vec::new(),
         };
 
         let default_field_names = vec!["title".to_string(), "desc".to_string()];

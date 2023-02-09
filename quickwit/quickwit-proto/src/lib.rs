@@ -196,8 +196,7 @@ impl From<SearchStreamRequest> for SearchRequest {
             end_timestamp: item.end_timestamp,
             max_hits: 0,
             start_offset: 0,
-            sort_by_field: None,
-            sort_order: None,
+            sort_by: Vec::new(),
             aggregation_request: None,
         }
     }
@@ -222,7 +221,7 @@ impl fmt::Display for SplitSearchError {
     }
 }
 
-/// `MutMetadataMap` used to extract [`tonic::metadata::MetadataMap`] from a request. 
+/// `MutMetadataMap` used to extract [`tonic::metadata::MetadataMap`] from a request.
 pub struct MutMetadataMap<'a>(&'a mut tonic::metadata::MetadataMap);
 
 impl<'a> Injector for MutMetadataMap<'a> {
