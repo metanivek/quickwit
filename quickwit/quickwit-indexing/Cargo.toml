@@ -22,6 +22,7 @@ fnv = { workspace = true }
 futures = { workspace = true }
 itertools = { workspace = true }
 libz-sys = { workspace = true, optional = true }
+num_cpus = { workspace = true }
 once_cell = { workspace = true }
 oneshot = { workspace = true }
 openssl = { workspace = true, optional = true }

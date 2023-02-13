@@ -29,6 +29,7 @@ use byte_unit::Byte;
 use fail::fail_point;
 use fnv::FnvHashMap;
 use itertools::Itertools;
+use once_cell::sync::Lazy;
 use quickwit_actors::{Actor, ActorContext, ActorExitStatus, Handler, Mailbox, QueueCapacity};
 use quickwit_common::io::IoControls;
 use quickwit_common::runtimes::RuntimeType;
@@ -51,8 +52,8 @@ use crate::models::{
     NewPublishLock, PreparedDoc, PreparedDocBatch, PublishLock, ScratchDirectory,
 };
 
-/// Limits the number of concurrent active workbenches to 10.
-static INDEXING_PERMITS: Semaphore = Semaphore::const_new(10);
+/// Limits the number of concurrent active workbenches to `num_cpus`.
+static INDEXING_PERMITS: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(num_cpus::get()));
 
 // Random partition id used to gather partitions exceeding the maximum number of partitions.
 const OTHER_PARTITION_ID: u64 = 3264326757911759461u64;
