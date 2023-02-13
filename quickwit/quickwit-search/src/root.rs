@@ -297,12 +297,9 @@ pub async fn root_search(
         match aggregations.expect(
             "Aggregation should be present since we have an intermediate aggregation result.",
         ) {
-            QuickwitAggregations::FindTraceIdsAggregation(collector) => {
-                let fruits: Vec<
-                    <<FindTraceIdsCollector as Collector>::Child as SegmentCollector>::Fruit,
-                > = serde_json::from_str(&intermediate_aggregation_result)?;
-                let merged_fruit = collector.merge_fruits(fruits)?;
-                Some(serde_json::to_string(&merged_fruit)?)
+            QuickwitAggregations::FindTraceIdsAggregation(_) => {
+                println!("MOTHERFUCKER: intermediate_aggregation_result: {}", intermediate_aggregation_result);
+                Some(intermediate_aggregation_result)
             }
             QuickwitAggregations::TantivyAggregations(aggregations) => {
                 let res: IntermediateAggregationResults =

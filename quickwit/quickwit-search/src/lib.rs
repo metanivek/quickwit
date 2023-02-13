@@ -57,6 +57,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use itertools::Itertools;
+pub use jaeger_collector::FindTraceIdsCollector;
 use quickwit_config::{build_doc_mapper, QuickwitConfig, SearcherConfig};
 use quickwit_doc_mapper::tag_pruning::extract_tags_from_query;
 use quickwit_metastore::{ListSplitsQuery, Metastore, SplitMetadata, SplitState};

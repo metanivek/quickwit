@@ -461,13 +461,19 @@ fn merge_leaf_responses(
                 .filter_map(|leaf_response| {
                     leaf_response.intermediate_aggregation_result.as_ref().map(
                         |intermediate_aggregation_result| {
-                            serde_json::from_str(intermediate_aggregation_result)
+                            println!("BAR intermediate_aggregation_result: {:#?}", intermediate_aggregation_result);
+                            let fruit = serde_json::from_str(intermediate_aggregation_result);
+                            println!("BAR fruit: {:#?}", fruit);
+                            fruit
                         },
                     )
                 })
                 .collect::<Result<_, _>>()?;
             let merged_fruit = collector.merge_fruits(fruits)?;
-            Some(serde_json::to_string(&merged_fruit)?)
+            println!("QUX merged_fruit: {:#?}", merged_fruit);
+            let merged_fruit_json = Some(serde_json::to_string(&merged_fruit)?);
+            println!("QUX merged_fruit: {:#?}", merged_fruit_json);
+            merged_fruit_json
         }
         Some(QuickwitAggregations::TantivyAggregations(_)) => {
             let fruits: Vec<IntermediateAggregationResults> = leaf_responses
@@ -545,6 +551,7 @@ pub(crate) fn make_collector_for_split(
         Some(aggregation) => Some(serde_json::from_str(aggregation)?),
         None => None,
     };
+    println!("FOO aggregation: {:?}", aggregation);
     let timestamp_field_opt = doc_mapper.timestamp_field(split_schema);
     let timestamp_filter_builder_opt = TimestampFilterBuilder::new(
         doc_mapper.timestamp_field_name(),
@@ -588,11 +595,11 @@ pub(crate) fn make_collector_for_split(
 pub(crate) fn make_merge_collector(
     search_request: &SearchRequest,
 ) -> crate::Result<QuickwitCollector> {
-    let aggregation = if let Some(agg) = search_request.aggregation_request.as_ref() {
-        Some(serde_json::from_str(agg)?)
-    } else {
-        None
+    let aggregation = match &search_request.aggregation_request {
+        Some(aggregation) => Some(serde_json::from_str(aggregation)?),
+        None => None,
     };
+    println!("FOO aggregation: {:?}", aggregation);
     Ok(QuickwitCollector {
         split_id: String::default(),
         start_offset: search_request.start_offset as usize,

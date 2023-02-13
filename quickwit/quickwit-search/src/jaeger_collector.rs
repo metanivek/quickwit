@@ -20,7 +20,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use base64::prelude::{Engine, BASE64_STANDARD};
 use fnv::FnvHashMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -28,28 +27,20 @@ use tantivy::collector::{Collector, SegmentCollector};
 use tantivy::fastfield::{Column, MultiValuedFastFieldReader};
 use tantivy::{DateTime, DocId, InvertedIndexReader, Score, SegmentReader};
 
-type B64TraceId = String;
 type TraceId = Vec<u8>;
 type TraceIdTermOrd = u64;
 type SpanTimestamp = i64;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TraceIdSpanTimestamp {
-    pub trace_id: B64TraceId,
+    pub trace_id: TraceId,
     pub span_timestamp: SpanTimestamp,
 }
 
 impl TraceIdSpanTimestamp {
-    fn from_base64(trace_id: B64TraceId, span_timestamp: i64) -> Self {
+    fn new(trace_id: TraceId, span_timestamp: i64) -> Self {
         Self {
             trace_id,
-            span_timestamp,
-        }
-    }
-
-    fn from_bytes(trace_id: TraceId, span_timestamp: i64) -> Self {
-        Self {
-            trace_id: BASE64_STANDARD.encode(trace_id),
             span_timestamp,
         }
     }
@@ -60,12 +51,16 @@ impl TraceIdSpanTimestamp {
 /// top k elements with duplicates
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FindTraceIdsCollector {
-    num_traces: usize,
-    trace_id_field_name: String,
-    span_timestamp_field_name: String,
+    /// The number of traces to select.
+    pub num_traces: usize,
+    /// The name of the fast field storing the trace IDs.
+    pub trace_id_field_name: String,
+    /// The name of the fast field recording the spans' start timestamp.
+    pub span_timestamp_field_name: String,
 }
 
 impl FindTraceIdsCollector {
+    /// The names of the fast fields accessed by this collector.
     pub fn fast_field_names(&self) -> HashSet<String> {
         HashSet::from_iter([
             self.trace_id_field_name.clone(),
@@ -73,6 +68,7 @@ impl FindTraceIdsCollector {
         ])
     }
 
+    /// The field names of the term dictionnaries accessed by this collector.
     pub fn term_dict_field_names(&self) -> HashSet<String> {
         HashSet::from_iter([self.trace_id_field_name.clone()])
     }
@@ -104,7 +100,7 @@ impl Collector for FindTraceIdsCollector {
             trace_id_ff_reader,
             span_timestamp_column,
             inverted_index_reader,
-            buckets: FnvHashMap::default(),
+            workbench: FooTraceIds::new(self.num_traces),
         })
     }
 
@@ -127,11 +123,11 @@ impl Collector for FindTraceIdsCollector {
         }
         let merged_fruits = buckets
             .into_iter()
-            .sorted_by_key(|(_, span_timestamp)| *span_timestamp)
+            .sorted_unstable_by_key(|(_, span_timestamp)| *span_timestamp)
             .rev()
             .take(self.num_traces)
             .map(|(trace_id, span_timestamp)| {
-                TraceIdSpanTimestamp::from_base64(trace_id, span_timestamp)
+                TraceIdSpanTimestamp::new(trace_id, span_timestamp)
             })
             .collect();
         Ok(merged_fruits)
@@ -149,7 +145,7 @@ pub struct FindTraceIdsSegmentCollector {
     trace_id_ff_reader: MultiValuedFastFieldReader<u64>,
     span_timestamp_column: Arc<dyn Column<DateTime>>,
     inverted_index_reader: Arc<InvertedIndexReader>,
-    buckets: FnvHashMap<TraceIdTermOrd, SpanTimestamp>,
+    workbench: FooTraceIds,
 }
 
 impl FindTraceIdsSegmentCollector {
@@ -181,8 +177,71 @@ impl SegmentCollector for FindTraceIdsSegmentCollector {
     fn collect(&mut self, doc: DocId, _score: Score) {
         let trace_id_term_ord = self.trace_id_term_ord(doc);
         let span_timestamp = self.span_timestamp(doc);
-        self.buckets
-            .entry(trace_id_term_ord)
+        self.workbench.collect(trace_id_term_ord, span_timestamp);
+    }
+
+    fn harvest(self) -> Self::Fruit {
+        // (&mut self).workbench.harvest();
+        // let (workbench, foofoo) = (self.workbench.harvest(), self);
+        self.workbench
+            .dedup_workbench
+            .iter()
+            .sorted_unstable_by_key(|(_, span_timestamp)| *span_timestamp)
+            .rev()
+            .take(self.num_traces)
+            .map(|(trace_id_term_ord, span_timestamp)| {
+                let trace_id = self.trace_id(*trace_id_term_ord);
+                TraceIdSpanTimestamp::new(trace_id, *span_timestamp)
+            })
+            .collect()
+    }
+}
+
+struct FooTraceIds {
+    num_traces: usize,
+    dedup_workbench: FnvHashMap<TraceIdTermOrd, SpanTimestamp>,
+    select_workbench: Vec<(SpanTimestamp, TraceIdTermOrd)>,
+    running_trace_id: Option<TraceIdTermOrd>,
+    running_span_timestamp: SpanTimestamp,
+}
+
+impl FooTraceIds {
+    fn new(num_traces: usize) -> Self {
+        Self {
+            num_traces,
+            dedup_workbench: FnvHashMap::with_capacity_and_hasher(
+                2 * num_traces,
+                Default::default(),
+            ),
+            select_workbench: Vec::with_capacity(2 * num_traces),
+            running_trace_id: None,
+            running_span_timestamp: 0,
+        }
+    }
+
+    fn collect(&mut self, trace_id: TraceIdTermOrd, span_timestamp: SpanTimestamp) {
+        if self.running_trace_id.is_none() {
+            self.running_trace_id = Some(trace_id);
+            self.running_span_timestamp = span_timestamp;
+            return;
+        }
+        let running_trace_id = self
+            .running_trace_id
+            .expect("The running trace ID should be set.");
+
+        if running_trace_id == trace_id {
+            self.running_span_timestamp = self.running_span_timestamp.max(span_timestamp);
+        } else {
+            self.insert(running_trace_id, self.running_span_timestamp);
+            self.truncate();
+            self.running_trace_id = Some(trace_id);
+            self.running_span_timestamp = span_timestamp;
+        }
+    }
+
+    fn insert(&mut self, trace_id: TraceIdTermOrd, span_timestamp: SpanTimestamp) {
+        self.dedup_workbench
+            .entry(trace_id)
             .and_modify(|entry| {
                 if *entry < span_timestamp {
                     *entry = span_timestamp
@@ -191,14 +250,25 @@ impl SegmentCollector for FindTraceIdsSegmentCollector {
             .or_insert(span_timestamp);
     }
 
-    fn harvest(self) -> Self::Fruit {
-        self.buckets
-            .iter()
-            .take(self.num_traces)
-            .map(|(trace_id_term_ord, span_timestamp)| {
-                TraceIdSpanTimestamp::from_bytes(self.trace_id(*trace_id_term_ord), *span_timestamp)
-            })
-            .collect()
+    fn truncate(&mut self) {
+        if self.dedup_workbench.len() < 2 * self.num_traces {
+            return;
+        }
+        for (trace_id, span_timestamp) in self.dedup_workbench.drain() {
+            self.select_workbench.push((span_timestamp, trace_id));
+        }
+        self.select_workbench.select_nth_unstable(self.num_traces);
+
+        for (span_timestamp, trace_id) in &self.select_workbench[self.num_traces..] {
+            self.dedup_workbench.insert(*trace_id, *span_timestamp);
+        }
+        self.select_workbench.clear();
+    }
+
+    fn harvest(&mut self) {
+        if let Some(running_trace_id) = self.running_trace_id {
+            self.insert(running_trace_id, self.running_span_timestamp);
+        }
     }
 }
 

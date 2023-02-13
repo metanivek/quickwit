@@ -45,9 +45,11 @@ use quickwit_proto::jaeger::storage::v1::{
     SpansResponseChunk, TraceQueryParameters,
 };
 use quickwit_proto::{ListTermsRequest, SearchRequest};
-use quickwit_search::SearchService;
+use quickwit_search::{FindTraceIdsCollector, SearchService};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
+use tantivy::aggregation::agg_result;
+use tantivy::collector::Collector;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tokio::sync::mpsc;
@@ -643,28 +645,12 @@ fn build_search_query(
 }
 
 fn build_aggregations_query(num_traces: usize) -> String {
-    // DANGER: The fast field is truncated to seconds but the aggregation returns timestamps in
-    // microseconds by appending a bunch of zeros.
-    let query = format!(
-        r#"{{
-        "trace_ids": {{
-            "terms": {{
-                "field": "trace_id",
-                "size": {num_traces},
-                "order": {{
-                    "max_span_start_timestamp_micros": "desc"
-                }}
-            }},
-            "aggs": {{
-                "max_span_start_timestamp_micros": {{
-                    "max": {{
-                        "field": "span_start_timestamp_secs"
-                    }}
-                }}
-            }}
-        }}
-    }}"#,
-    );
+    let query = serde_json::to_string(&FindTraceIdsCollector {
+        num_traces,
+        trace_id_field_name: "trace_id".to_string(),
+        span_timestamp_field_name: "span_start_timestamp_secs".to_string(),
+    })
+    .unwrap();
     debug!(query=%query, "Aggregations query");
     query
 }
@@ -969,18 +955,18 @@ struct MetricValue {
 }
 
 fn collect_trace_ids(agg_result_json: &str) -> Result<(Vec<TraceId>, TimeIntervalSecs), Status> {
-    let agg_result: TraceIdsAggResult = json_deserialize(agg_result_json, "trace IDs aggregation")?;
-    if agg_result.trace_ids.buckets.is_empty() {
+    let agg_result: <FindTraceIdsCollector as Collector>::Fruit = json_deserialize(agg_result_json, "trace IDs aggregation")?;
+    if agg_result.is_empty() {
         return Ok((Vec::new(), 0..=0));
     }
-    let mut trace_ids = Vec::with_capacity(agg_result.trace_ids.buckets.len());
+    let mut trace_ids = Vec::with_capacity(agg_result.len());
     let mut start = i64::MAX;
     let mut end = i64::MIN;
 
-    for bucket in agg_result.trace_ids.buckets {
-        trace_ids.push(bucket.key);
-        start = start.min(bucket.max_span_start_timestamp_micros.value as i64);
-        end = end.max(bucket.max_span_start_timestamp_micros.value as i64);
+    for trace_id_span_timestamp in agg_result {
+        trace_ids.push(String::from_utf8(trace_id_span_timestamp.trace_id).expect("trace ID is not valid UTF-8"));
+        start = start.min(trace_id_span_timestamp.span_timestamp);
+        end = end.max(trace_id_span_timestamp.span_timestamp);
     }
     let start = start / 1_000_000;
     let end = end / 1_000_000;
