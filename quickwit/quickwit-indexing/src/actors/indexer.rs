@@ -363,7 +363,7 @@ impl Actor for Indexer {
         }
         // Time to take a nap.
         let sleep_for = commit_timeout - elapsed;
-        ctx.sleep(sleep_for).await;
+        ctx.protect_future(ctx.sleep(sleep_for)).await;
         Ok(())
     }
 
