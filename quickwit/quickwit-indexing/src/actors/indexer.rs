@@ -30,7 +30,9 @@ use fail::fail_point;
 use fnv::FnvHashMap;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
-use quickwit_actors::{Actor, ActorContext, ActorExitStatus, Handler, Mailbox, QueueCapacity};
+use quickwit_actors::{
+    Actor, ActorContext, ActorExitStatus, Command, Handler, Mailbox, QueueCapacity,
+};
 use quickwit_common::io::IoControls;
 use quickwit_common::runtimes::RuntimeType;
 use quickwit_config::IndexingSettings;
@@ -364,7 +366,8 @@ impl Actor for Indexer {
         }
         // Time to take a nap.
         let sleep_for = commit_timeout - elapsed;
-        ctx.protect_future(ctx.sleep(sleep_for)).await;
+        ctx.schedule_self_msg(sleep_for, Command::Resume).await;
+        self.handle(Command::Pause, ctx).await?;
         Ok(())
     }
 
@@ -842,18 +845,97 @@ mod tests {
         let body_field = schema.get_field("body").unwrap();
         let timestamp_field = schema.get_field("timestamp").unwrap();
         let indexing_directory = ScratchDirectory::for_test();
+        let mut indexing_settings = IndexingSettings::for_test();
+        indexing_settings.commit_timeout_secs = 1;
+        let (index_serializer_mailbox, index_serializer_inbox) = universe.create_test_mailbox();
+        let mut metastore = MockMetastore::default();
+        metastore.expect_publish_splits().never();
+        metastore
+            .expect_last_delete_opstamp()
+            .returning(move |index_id| {
+                assert_eq!(index_id, "test-index");
+                Ok(last_delete_opstamp)
+            });
+        metastore.expect_publish_splits().never();
+        let indexer = Indexer::new(
+            pipeline_id,
+            doc_mapper,
+            Arc::new(metastore),
+            indexing_directory,
+            indexing_settings,
+            index_serializer_mailbox,
+        );
+        let (indexer_mailbox, indexer_handle) = universe.spawn_builder().spawn(indexer);
+        tokio::task::spawn({
+            let indexer_mailbox = indexer_mailbox.clone();
+            async move {
+                let mut position = 0;
+                while let Ok(_) = indexer_mailbox
+                    .send_message(PreparedDocBatch {
+                        docs: vec![PreparedDoc {
+                            doc: doc!(
+                                body_field=>"this is a test document",
+                                timestamp_field=>DateTime::from_timestamp_micros(1_662_529_435_000_001i64)
+                            ),
+                            timestamp_opt: Some(1_662_529_435_000_001i64),
+                            partition: 1,
+                            num_bytes: 30,
+                        }],
+                        checkpoint_delta: SourceCheckpointDelta::from(position..position + 1),
+                    })
+                    .await {
+                        position += 1;
+                }
+            }
+        });
+        universe.sleep(Duration::from_secs(2)).await;
+
+        let indexer_counters = indexer_handle.process_pending_and_observe().await.state;
+        assert_eq!(indexer_counters.num_splits_emitted, 1);
+        assert_eq!(indexer_counters.num_split_batches_emitted, 1);
+
+        let indexed_serializer_messages: Vec<IndexedSplitBatchBuilder> =
+            index_serializer_inbox.drain_for_test_typed();
+        assert!(!indexed_serializer_messages.is_empty());
+        assert_eq!(
+            indexed_serializer_messages[0].commit_trigger,
+            CommitTrigger::Timeout
+        );
+        assert!(
+            indexed_serializer_messages[0].splits[0]
+                .split_attrs
+                .num_docs
+            > 0
+        );
+        universe.assert_quit().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_indexer_triggers_commit_on_drained_mailbox() -> anyhow::Result<()> {
+        let universe = Universe::with_accelerated_time();
+        let pipeline_id = IndexingPipelineId {
+            index_id: "test-index".to_string(),
+            source_id: "test-source".to_string(),
+            node_id: "test-node".to_string(),
+            pipeline_ord: 0,
+        };
+        let doc_mapper = Arc::new(default_doc_mapper_for_test());
+        let last_delete_opstamp = 10;
+        let schema = doc_mapper.schema();
+        let body_field = schema.get_field("body").unwrap();
+        let timestamp_field = schema.get_field("timestamp").unwrap();
+        let indexing_directory = ScratchDirectory::for_test();
         let indexing_settings = IndexingSettings::for_test();
         let (index_serializer_mailbox, index_serializer_inbox) = universe.create_test_mailbox();
         let mut metastore = MockMetastore::default();
         metastore.expect_publish_splits().never();
         metastore
             .expect_last_delete_opstamp()
-            .once()
             .returning(move |index_id| {
                 assert_eq!(index_id, "test-index");
                 Ok(last_delete_opstamp)
             });
-        metastore.expect_publish_splits().never();
         let indexer = Indexer::new(
             pipeline_id,
             doc_mapper,
@@ -878,17 +960,8 @@ mod tests {
             })
             .await
             .unwrap();
-        let indexer_counters = indexer_handle.process_pending_and_observe().await.state;
-        assert_eq!(
-            indexer_counters,
-            IndexerCounters {
-                num_splits_emitted: 0,
-                num_split_batches_emitted: 0,
-                num_docs_in_workbench: 1,
-            }
-        );
-        universe.sleep(Duration::from_secs(61)).await;
-        let indexer_counters = indexer_handle.process_pending_and_observe().await.state;
+        universe.sleep(Duration::from_secs(1)).await;
+        let indexer_counters = indexer_handle.observe().await.state;
         assert_eq!(
             indexer_counters,
             IndexerCounters {
@@ -902,15 +975,9 @@ mod tests {
         assert_eq!(indexed_split_batches.len(), 1);
         assert_eq!(
             indexed_split_batches[0].commit_trigger,
-            CommitTrigger::Timeout
+            CommitTrigger::Drained
         );
         assert_eq!(indexed_split_batches[0].splits[0].split_attrs.num_docs, 1);
-        assert_eq!(
-            indexed_split_batches[0].splits[0]
-                .split_attrs
-                .delete_opstamp,
-            last_delete_opstamp
-        );
         universe.assert_quit().await;
         Ok(())
     }
