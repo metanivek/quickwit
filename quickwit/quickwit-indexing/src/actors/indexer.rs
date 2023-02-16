@@ -34,7 +34,7 @@ use quickwit_actors::{
     Actor, ActorContext, ActorExitStatus, Command, Handler, Mailbox, QueueCapacity,
 };
 use quickwit_common::io::IoControls;
-use quickwit_common::runtimes::RuntimeType;
+use quickwit_common::runtimes::{RuntimeType, RuntimesConfiguration};
 use quickwit_config::IndexingSettings;
 use quickwit_doc_mapper::{DocMapper, QUICKWIT_TOKENIZER_MANAGER};
 use quickwit_metastore::checkpoint::{IndexCheckpointDelta, SourceCheckpointDelta};
@@ -54,8 +54,11 @@ use crate::models::{
     NewPublishLock, PreparedDoc, PreparedDocBatch, PublishLock, ScratchDirectory,
 };
 
-/// Limits the number of concurrent active workbenches to `num_cpus`.
-static INDEXING_PERMITS: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(num_cpus::get()));
+/// Limits the number of concurrent active workbenches.
+static INDEXING_PERMITS: Lazy<Semaphore> = Lazy::new(|| {
+    let num_permits = RuntimesConfiguration::default().num_threads_blocking;
+    Semaphore::new(num_permits)
+});
 
 // Random partition id used to gather partitions exceeding the maximum number of partitions.
 const OTHER_PARTITION_ID: u64 = 3264326757911759461u64;
@@ -905,7 +908,7 @@ mod tests {
             indexed_serializer_messages[0].splits[0]
                 .split_attrs
                 .num_docs
-            > 0
+                > 0
         );
         universe.assert_quit().await;
         Ok(())

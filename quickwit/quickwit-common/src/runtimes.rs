@@ -48,8 +48,10 @@ pub enum RuntimeType {
 
 #[derive(Debug)]
 pub struct RuntimesConfiguration {
-    num_threads_non_blocking: usize,
-    num_threads_blocking: usize,
+    /// Number of worker threads allocated to the non-blocking runtime.
+    pub num_threads_non_blocking: usize,
+    /// Number of worker threads allocated to the blocking runtime.
+    pub num_threads_blocking: usize,
 }
 
 impl RuntimesConfiguration {

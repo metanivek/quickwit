@@ -4714,7 +4714,6 @@ dependencies = [
  "itertools",
  "libz-sys",
  "mockall",
- "num_cpus",
  "once_cell",
  "oneshot",
  "openssl",
