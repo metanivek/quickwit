@@ -622,7 +622,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_indexer_trigger_on_target_num_docs() -> anyhow::Result<()> {
+    async fn test_indexer_triggers_commit_on_target_num_docs() -> anyhow::Result<()> {
         let pipeline_id = IndexingPipelineId {
             index_id: "test-index".to_string(),
             source_id: "test-source".to_string(),
@@ -640,11 +640,12 @@ mod tests {
         let universe = Universe::with_accelerated_time();
         let (index_serializer_mailbox, index_serializer_inbox) = universe.create_test_mailbox();
         let mut metastore = MockMetastore::default();
+        metastore.expect_publish_splits().never();
         metastore
             .expect_last_delete_opstamp()
             .times(2)
             .returning(move |index_id| {
-                assert_eq!("test-index", index_id);
+                assert_eq!(index_id, "test-index");
                 Ok(last_delete_opstamp)
             });
         metastore.expect_publish_splits().never();
@@ -752,7 +753,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_indexer_trigger_on_memory_limit() -> anyhow::Result<()> {
+    async fn test_indexer_triggers_commit_on_memory_limit() -> anyhow::Result<()> {
         let universe = Universe::with_accelerated_time();
         let pipeline_id = IndexingPipelineId {
             index_id: "test-index".to_string(),
@@ -769,11 +770,12 @@ mod tests {
         indexing_settings.resources.heap_size = Byte::from_bytes(5_000_000);
         let (index_serializer_mailbox, index_serializer_inbox) = universe.create_test_mailbox();
         let mut metastore = MockMetastore::default();
+        metastore.expect_publish_splits().never();
         metastore
             .expect_last_delete_opstamp()
             .times(1..=2)
             .returning(move |index_id| {
-                assert_eq!("test-index", index_id);
+                assert_eq!(index_id, "test-index");
                 Ok(last_delete_opstamp)
             });
         metastore.expect_publish_splits().never();
@@ -826,7 +828,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_indexer_on_timeout() -> anyhow::Result<()> {
+    async fn test_indexer_triggers_commit_on_timeout() -> anyhow::Result<()> {
         let universe = Universe::with_accelerated_time();
         let pipeline_id = IndexingPipelineId {
             index_id: "test-index".to_string(),
@@ -843,11 +845,12 @@ mod tests {
         let indexing_settings = IndexingSettings::for_test();
         let (index_serializer_mailbox, index_serializer_inbox) = universe.create_test_mailbox();
         let mut metastore = MockMetastore::default();
+        metastore.expect_publish_splits().never();
         metastore
             .expect_last_delete_opstamp()
             .once()
             .returning(move |index_id| {
-                assert_eq!("test-index", index_id);
+                assert_eq!(index_id, "test-index");
                 Ok(last_delete_opstamp)
             });
         metastore.expect_publish_splits().never();
@@ -913,7 +916,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_indexer_eof() -> anyhow::Result<()> {
+    async fn test_indexer_triggers_commit_on_quit() -> anyhow::Result<()> {
         let universe = Universe::with_accelerated_time();
         let pipeline_id = IndexingPipelineId {
             index_id: "test-index".to_string(),
@@ -929,11 +932,12 @@ mod tests {
         let indexing_settings = IndexingSettings::for_test();
         let (index_serializer_mailbox, index_serializer_inbox) = universe.create_test_mailbox();
         let mut metastore = MockMetastore::default();
+        metastore.expect_publish_splits().never();
         metastore
             .expect_last_delete_opstamp()
             .once()
             .returning(move |index_id| {
-                assert_eq!("test-index", index_id);
+                assert_eq!(index_id, "test-index");
                 Ok(10)
             });
         metastore.expect_publish_splits().never();
@@ -1010,11 +1014,12 @@ mod tests {
         let indexing_settings = IndexingSettings::for_test();
         let (index_serializer_mailbox, index_serializer_inbox) = universe.create_test_mailbox();
         let mut metastore = MockMetastore::default();
+        metastore.expect_publish_splits().never();
         metastore
             .expect_last_delete_opstamp()
             .once()
             .returning(move |index_id| {
-                assert_eq!("test-index", index_id);
+                assert_eq!(index_id, "test-index");
                 Ok(10)
             });
         metastore.expect_publish_splits().never();
@@ -1105,7 +1110,7 @@ mod tests {
             .expect_last_delete_opstamp()
             .times(1)
             .returning(move |index_id| {
-                assert_eq!("test-index", index_id);
+                assert_eq!(index_id, "test-index");
                 Ok(10)
             });
         metastore.expect_publish_splits().never();
@@ -1177,7 +1182,7 @@ mod tests {
             .expect_last_delete_opstamp()
             .times(2)
             .returning(move |index_id| {
-                assert_eq!("test-index", index_id);
+                assert_eq!(index_id, "test-index");
                 Ok(10)
             });
         metastore.expect_publish_splits().never();
@@ -1250,7 +1255,7 @@ mod tests {
             .expect_last_delete_opstamp()
             .times(1)
             .returning(move |index_id| {
-                assert_eq!("test-index", index_id);
+                assert_eq!(index_id, "test-index");
                 Ok(10)
             });
         metastore.expect_publish_splits().never();
