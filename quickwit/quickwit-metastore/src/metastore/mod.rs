@@ -38,6 +38,7 @@ use quickwit_doc_mapper::tag_pruning::TagFilterAst;
 use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 
 use crate::checkpoint::IndexCheckpointDelta;
+use crate::ingest::ShardService;
 use crate::{MetastoreError, MetastoreResult, Split, SplitMetadata, SplitState};
 
 /// Metastore meant to manage Quickwit's indexes, their splits and delete tasks.
@@ -88,7 +89,7 @@ use crate::{MetastoreError, MetastoreResult, Split, SplitMetadata, SplitState};
 /// corresponding index.
 #[cfg_attr(any(test, feature = "testsuite"), mockall::automock)]
 #[async_trait]
-pub trait Metastore: Send + Sync + 'static {
+pub trait Metastore: ShardService + Send + Sync + 'static {
     /// Returns the metastore's uri.
     fn uri(&self) -> &Uri;
 

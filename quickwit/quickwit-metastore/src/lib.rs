@@ -32,6 +32,7 @@ mod tests;
 #[allow(missing_docs)]
 pub mod checkpoint;
 mod error;
+mod ingest;
 mod metastore;
 mod metastore_resolver;
 mod metrics;

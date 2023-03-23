@@ -13,25 +13,30 @@ documentation = "https://quickwit.io/docs/"
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 byte-unit = { workspace = true }
-sqlx = { workspace = true, optional = true }
+dyn-clone = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 itertools = { workspace = true }
 mockall = { workspace = true, optional = true }
 once_cell = { workspace = true }
+prost = { workspace = true }
+prost-types = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sqlx = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
+tonic = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
 utoipa = { workspace = true }
 
+quickwit-actors = { workspace = true }
 quickwit-cluster = { workspace = true }
 quickwit-common = { workspace = true }
 quickwit-config = { workspace = true }
@@ -52,6 +57,9 @@ quickwit-config = { workspace = true, features = ["testsuite"] }
 quickwit-doc-mapper = { workspace = true, features = ["testsuite"] }
 quickwit-grpc-clients = { workspace = true, features = ["testsuite"] }
 quickwit-storage = { workspace = true, features = ["testsuite"] }
+
+[build-dependencies]
+quickwit-codegen = { workspace = true }
 
 [features]
 testsuite = ["mockall", "tempfile", "quickwit-config/testsuite"]

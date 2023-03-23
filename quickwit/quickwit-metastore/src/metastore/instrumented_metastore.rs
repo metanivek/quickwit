@@ -22,7 +22,8 @@ use quickwit_common::uri::Uri;
 use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::{IndexCheckpointDelta, Position};
+use crate::ingest::{Shard, ShardService, ShardServiceError};
 use crate::{IndexMetadata, ListSplitsQuery, Metastore, MetastoreResult, Split, SplitMetadata};
 
 macro_rules! instrument {
@@ -291,6 +292,53 @@ impl Metastore for InstrumentedMetastore {
                 .await,
             [list_stale_splits, index_id]
         );
+    }
+}
+
+#[async_trait]
+impl ShardService for InstrumentedMetastore {
+    async fn open_shard(&self, shard: Shard) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn get_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+    ) -> Result<Shard, ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn update_shard(&self, shard: Shard) -> Result<Shard, ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn close_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+        position: Position,
+    ) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn delete_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+    ) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn list_shards(
+        &self,
+        index_id: &str,
+        source_id: &str,
+    ) -> Result<Vec<Shard>, ShardServiceError> {
+        unimplemented!()
     }
 }
 

@@ -45,7 +45,8 @@ use self::store_operations::{
     delete_index, fetch_and_build_indexes_states, fetch_index, index_exists, put_index,
     put_indexes_states,
 };
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::{IndexCheckpointDelta, Position};
+use crate::ingest::{Shard, ShardService, ShardServiceError};
 use crate::{
     IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, MetastoreResult, Split,
     SplitMetadata, SplitState,
@@ -623,6 +624,53 @@ async fn get_index_mutex(
                     happened. Try to delete it again."
                 .to_string(),
         }),
+    }
+}
+
+#[async_trait]
+impl ShardService for FileBackedMetastore {
+    async fn open_shard(&self, shard: Shard) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn get_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+    ) -> Result<Shard, ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn update_shard(&self, shard: Shard) -> Result<Shard, ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn close_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+        position: Position,
+    ) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn delete_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+    ) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn list_shards(
+        &self,
+        index_id: &str,
+        source_id: &str,
+    ) -> Result<Vec<Shard>, ShardServiceError> {
+        unimplemented!()
     }
 }
 

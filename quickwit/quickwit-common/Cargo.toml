@@ -25,10 +25,12 @@ num_cpus = { workspace = true }
 once_cell = { workspace = true }
 pin-project-lite = { workspace = true }
 pnet = { workspace = true }
+prost-types = { workspace = true }
 prometheus = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
+time = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }

@@ -25,7 +25,8 @@ use quickwit_config::{IndexConfig, SourceConfig};
 use quickwit_proto::metastore_api::{DeleteQuery, DeleteTask};
 
 use super::retry::RetryParams;
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::{IndexCheckpointDelta, Position};
+use crate::ingest::{Shard, ShardService, ShardServiceError};
 use crate::{
     IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, MetastoreResult, RetryingMetastore,
     Split, SplitMetadata,
@@ -210,6 +211,53 @@ impl Metastore for RetryTestMetastore {
             Ok(_) => Ok(vec![]),
             Err(err) => Err(err),
         }
+    }
+}
+
+#[async_trait]
+impl ShardService for RetryTestMetastore {
+    async fn open_shard(&self, shard: Shard) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn get_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+    ) -> Result<Shard, ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn update_shard(&self, shard: Shard) -> Result<Shard, ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn close_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+        position: Position,
+    ) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn delete_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+    ) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn list_shards(
+        &self,
+        index_id: &str,
+        source_id: &str,
+    ) -> Result<Vec<Shard>, ShardServiceError> {
+        unimplemented!()
     }
 }
 

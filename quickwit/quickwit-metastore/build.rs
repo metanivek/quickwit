@@ -17,6 +17,17 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+use quickwit_codegen::Codegen;
+
 fn main() {
     println!("cargo:rerun-if-changed=migrations/postgresql");
+
+    Codegen::run(
+        "src/ingest/shard_service.proto",
+        "src/ingest/codegen",
+        "crate::ingest::Result",
+        "crate::ingest::ShardServiceError",
+        &[],
+    )
+    .unwrap();
 }

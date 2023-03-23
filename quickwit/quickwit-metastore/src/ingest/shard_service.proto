@@ -1,0 +1,115 @@
+// Copyright (C) 2023 Quickwit, Inc.
+//
+// Quickwit is offered under the AGPL v3.0 and as commercial software.
+// For commercial licensing, contact us at hello@quickwit.io.
+//
+// AGPL:
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Affero General Public License as
+// published by the Free Software Foundation, either version 3 of the
+// License, or (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Affero General Public License for more details.
+//
+// You should have received a copy of the GNU Affero General Public License
+// along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+syntax = "proto3";
+
+package shard_service;
+
+import "google/protobuf/timestamp.proto";
+
+
+service ShardService {
+    rpc OpenShard(OpenShardRequest) returns (OpenShardResponse);
+    rpc GetShard(GetShardRequest) returns (GetShardResponse);
+    rpc UpdateShard(UpdateShardRequest) returns (UpdateShardResponse);
+    rpc CloseShard(CloseShardRequest) returns (CloseShardResponse);
+    rpc DeleteShard(DeleteShardRequest) returns (DeleteShardResponse);
+    rpc ListShards(ListShardsRequest) returns (ListShardsResponse);
+}
+
+enum ShardStatus {
+    OPEN = 0;
+    CLOSED = 1;
+}
+
+message Position {
+    string offset = 1;
+}
+
+message Shard {
+    string index_id = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    string leader_id = 4;
+    string follower_id = 5;
+    ShardStatus shard_status = 6;
+    Position consumer_position = 7;
+    optional Position closed_position = 8;
+    optional google.protobuf.Timestamp closed_timestamp = 9;
+    google.protobuf.Timestamp create_timestamp = 10;
+}
+
+message OpenShardRequest {
+    string index_id = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+}
+
+message OpenShardResponse {
+    Shard shard = 1;
+}
+
+message GetShardRequest {
+    string index_id = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+}
+
+message GetShardResponse {
+    Shard shard = 1;
+}
+
+message UpdateShardRequest {
+    Shard shard = 1;
+}
+
+message UpdateShardResponse {
+    Shard shard = 1;
+}
+
+message CloseShardRequest {
+    string index_id = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    Position position = 4;
+}
+
+message CloseShardResponse {
+    Shard shard = 1;
+}
+
+message DeleteShardRequest {
+    string index_id = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+}
+
+message DeleteShardResponse {
+}
+
+message ListShardsRequest {
+    string index_id = 1;
+    string source_id = 2;
+    uint64 shard_id = 3;
+    optional ShardStatus shard_status = 6;
+}
+
+message ListShardsResponse {
+    repeated Shard shards = 1;
+}

@@ -47,7 +47,8 @@ use tokio_stream::wrappers::WatchStream;
 use tower::timeout::error::Elapsed;
 use tower::timeout::Timeout;
 
-use crate::checkpoint::IndexCheckpointDelta;
+use crate::checkpoint::{IndexCheckpointDelta, Position};
+use crate::ingest::{Shard, ShardService, ShardServiceError};
 use crate::{
     IndexMetadata, ListSplitsQuery, Metastore, MetastoreError, MetastoreResult, Split,
     SplitMetadata,
@@ -541,6 +542,53 @@ impl Metastore for MetastoreGrpcClient {
                 }
             })?;
         Ok(splits)
+    }
+}
+
+#[async_trait]
+impl ShardService for MetastoreGrpcClient {
+    async fn open_shard(&self, shard: Shard) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn get_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+    ) -> Result<Shard, ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn update_shard(&self, shard: Shard) -> Result<Shard, ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn close_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+        position: Position,
+    ) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn delete_shard(
+        &self,
+        index_id: &str,
+        source_id: &str,
+        shard_id: u64,
+    ) -> Result<(), ShardServiceError> {
+        unimplemented!()
+    }
+
+    async fn list_shards(
+        &self,
+        index_id: &str,
+        source_id: &str,
+    ) -> Result<Vec<Shard>, ShardServiceError> {
+        unimplemented!()
     }
 }
 
