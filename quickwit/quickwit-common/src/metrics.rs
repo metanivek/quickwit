@@ -32,6 +32,7 @@ pub use prometheus::{
 /// Then it should have it's own specific API group.
 pub struct MetricsApi;
 
+#[derive(Clone)]
 pub struct HistogramVec<const N: usize> {
     underlying: PrometheusHistogramVec,
 }
@@ -42,6 +43,7 @@ impl<const N: usize> HistogramVec<N> {
     }
 }
 
+#[derive(Clone)]
 pub struct IntCounterVec<const N: usize> {
     underlying: PrometheusIntCounterVec,
 }
@@ -52,6 +54,7 @@ impl<const N: usize> IntCounterVec<N> {
     }
 }
 
+#[derive(Clone)]
 pub struct IntGaugeVec<const N: usize> {
     underlying: PrometheusIntGaugeVec,
 }
