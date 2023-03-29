@@ -25,6 +25,7 @@ use std::iter::FromIterator;
 use std::ops::Range;
 use std::sync::Arc;
 
+use quickwit_proto::metastore_api::Position as ProtoBufPosition;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -113,11 +114,25 @@ impl From<String> for Position {
     }
 }
 
-impl<'a> From<&'a str> for Position {
-    fn from(position_str: &'a str) -> Self {
+impl From<&str> for Position {
+    fn from(position_str: &str) -> Self {
         match position_str {
             "" => Position::Beginning,
             _ => Position::Offset(Arc::new(position_str.to_string())),
+        }
+    }
+}
+
+impl From<ProtoBufPosition> for Position {
+    fn from(protobuf_position: ProtoBufPosition) -> Self {
+        Self::from(protobuf_position.offset)
+    }
+}
+
+impl Into<ProtoBufPosition> for Position {
+    fn into(self) -> ProtoBufPosition {
+        ProtoBufPosition {
+            offset: self.as_str().to_string(),
         }
     }
 }

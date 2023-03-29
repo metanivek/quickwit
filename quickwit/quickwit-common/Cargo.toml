@@ -26,15 +26,17 @@ once_cell = { workspace = true }
 pin-project-lite = { workspace = true }
 pnet = { workspace = true }
 prometheus = { workspace = true }
+prost-types = { workspace = true }
 rand = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
-warp = { workspace = true }
 utoipa = { workspace = true }
+warp = { workspace = true }
 
 [features]
 testsuite = []
