@@ -12,9 +12,12 @@ from aws_cdk import (
 from constructs import Construct
 import yaml
 
-from ..services.quickwit_service import QuickwitService
+from ..services import quickwit_service
 
 SEARCHER_FUNCTION_NAME_EXPORT_NAME = "mock-data-searcher-function-name"
+INDEX_STORE_BUCKET_NAME_EXPORT_NAME = "mock-data-index-store-bucket-name"
+SOURCE_BUCKET_NAME_EXPORT_NAME = "mock-data-source-bucket-name"
+API_GATEWAY_EXPORT_NAME = "mock-data-api-gateway-url"
 
 
 class Source(Construct):
@@ -26,7 +29,8 @@ class Source(Construct):
         scope: Construct,
         construct_id: str,
         index_id: str,
-        qw_svc: QuickwitService,
+        qw_svc: quickwit_service.QuickwitService,
+        data_generation_interval_sec: int,
         **kwargs,
     ):
         super().__init__(scope, construct_id, **kwargs)
@@ -39,14 +43,12 @@ class Source(Construct):
             ],
         )
 
-        with open("resources/data-generator.py") as f:
-            lambda_code = f.read()
         generator_lambda = aws_lambda.Function(
             self,
             id="MockDataGenerator",
-            code=aws_lambda.Code.from_inline(lambda_code),
+            code=aws_lambda.Code.from_asset("resources/data-generator/"),
             runtime=aws_lambda.Runtime.PYTHON_3_10,
-            handler="index.lambda_handler",
+            handler="handler.lambda_handler",
             environment={
                 "BUCKET_NAME": mock_data_bucket.bucket_name,
                 "PREFIX": index_id,
@@ -58,13 +60,21 @@ class Source(Construct):
         rule = aws_events.Rule(
             self,
             "ScheduledRule",
-            schedule=aws_events.Schedule.rate(aws_cdk.Duration.minutes(5)),
+            schedule=aws_events.Schedule.rate(
+                aws_cdk.Duration.seconds(data_generation_interval_sec)
+            ),
         )
         rule.add_target(aws_events_targets.LambdaFunction(generator_lambda))
 
         mock_data_bucket.grant_read(qw_svc.indexer.lambda_function)
         mock_data_bucket.add_object_created_notification(
             aws_s3_notifications.LambdaDestination(qw_svc.indexer.lambda_function)
+        )
+        aws_cdk.CfnOutput(
+            self,
+            "source-bucket-name",
+            value=mock_data_bucket.bucket_name,
+            export_name=SOURCE_BUCKET_NAME_EXPORT_NAME,
         )
 
 
@@ -77,7 +87,7 @@ class SearchAPI(Construct):
         scope: Construct,
         construct_id: str,
         index_id: str,
-        qw_svc: QuickwitService,
+        qw_svc: quickwit_service.QuickwitService,
         api_key: str,
         **kwargs,
     ) -> None:
@@ -92,11 +102,12 @@ class SearchAPI(Construct):
         searcher_integration = aws_apigateway.LambdaIntegration(
             qw_svc.searcher.lambda_function
         )
-        search_resource = (
-            api.root.add_resource("v1").add_resource(index_id).add_resource("search")
-        )
+        search_resource = api.root.add_resource("v1").add_resource("{proxy+}")
         search_resource.add_method("POST", searcher_integration, api_key_required=True)
-        api_deployment = aws_apigateway.Deployment(self, "api-deployment", api=api)
+        search_resource.add_method("GET", searcher_integration, api_key_required=True)
+        # Change the deployment id (api-deployment-x) each time the API changes,
+        # otherwise changes are not deployed.
+        api_deployment = aws_apigateway.Deployment(self, "api-deployment-1", api=api)
         api_stage = aws_apigateway.Stage(
             self, "api", deployment=api_deployment, stage_name="api"
         )
@@ -116,7 +127,10 @@ class SearchAPI(Construct):
         api.deployment_stage = api_stage
 
         aws_cdk.CfnOutput(
-            self, "search-api-url", value=api.url.rstrip("/") + search_resource.path
+            self,
+            "search-api-url",
+            value=api.url.rstrip("/") + search_resource.path,
+            export_name=API_GATEWAY_EXPORT_NAME,
         )
 
 
@@ -128,6 +142,7 @@ class MockDataStack(Stack):
         indexer_package_location: str,
         searcher_package_location: str,
         search_api_key: str | None = None,
+        data_generation_interval_sec: int = 300,
         **kwargs,
     ) -> None:
         """If `search_api_key` is not set, the search API is not deployed."""
@@ -143,17 +158,31 @@ class MockDataStack(Stack):
             "mock-data-index-config",
             path=index_config_local_path,
         )
-        qw_svc = QuickwitService(
+        lambda_env = quickwit_service.extract_local_env()
+        qw_svc = quickwit_service.QuickwitService(
             self,
             "Quickwit",
             index_id=index_id,
             index_config_bucket=index_config.s3_bucket_name,
             index_config_key=index_config.s3_object_key,
+            indexer_environment={
+                # the actor system is very verbose when the source is shutting
+                # down (each Lambda invocation)
+                "RUST_LOG": "info,quickwit_actors=warn",
+                **lambda_env,
+            },
+            searcher_environment=lambda_env,
             indexer_package_location=indexer_package_location,
             searcher_package_location=searcher_package_location,
         )
 
-        Source(self, "Source", index_id=index_id, qw_svc=qw_svc)
+        Source(
+            self,
+            "Source",
+            index_id=index_id,
+            qw_svc=qw_svc,
+            data_generation_interval_sec=data_generation_interval_sec,
+        )
 
         if search_api_key is not None:
             SearchAPI(
@@ -164,6 +193,12 @@ class MockDataStack(Stack):
                 api_key=search_api_key,
             )
 
+        aws_cdk.CfnOutput(
+            self,
+            "index-store-bucket-name",
+            value=qw_svc.bucket.bucket_name,
+            export_name=INDEX_STORE_BUCKET_NAME_EXPORT_NAME,
+        )
         aws_cdk.CfnOutput(
             self,
             "searcher-function-name",
