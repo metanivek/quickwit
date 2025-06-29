@@ -441,8 +441,7 @@ impl TryFrom<ColumnType> for SortFieldType {
             ColumnType::DateTime => Ok(SortFieldType::DateTime),
             ColumnType::Bool => Ok(SortFieldType::Bool),
             _ => Err(TantivyError::InvalidArgument(format!(
-                "Unsupported sort field type `{:?}`.",
-                column_type
+                "Unsupported sort field type `{column_type:?}`."
             ))),
         }
     }
@@ -1013,13 +1012,13 @@ pub(crate) fn sort_by_from_request(search_request: &SearchRequest) -> SortByPair
         .into()
     } else if num_sort_fields == 1 {
         let sort_field = &search_request.sort_fields[0];
-        let order = SortOrder::from_i32(sort_field.sort_order).unwrap_or(SortOrder::Desc);
+        let order = SortOrder::try_from(sort_field.sort_order).unwrap_or(SortOrder::Desc);
         to_sort_by_component(&sort_field.field_name, order).into()
     } else if num_sort_fields == 2 {
         let sort_field1 = &search_request.sort_fields[0];
-        let order1 = SortOrder::from_i32(sort_field1.sort_order).unwrap_or(SortOrder::Desc);
+        let order1 = SortOrder::try_from(sort_field1.sort_order).unwrap_or(SortOrder::Desc);
         let sort_field2 = &search_request.sort_fields[1];
-        let order2 = SortOrder::from_i32(sort_field2.sort_order).unwrap_or(SortOrder::Desc);
+        let order2 = SortOrder::try_from(sort_field2.sort_order).unwrap_or(SortOrder::Desc);
         SortByPair {
             first: to_sort_by_component(&sort_field1.field_name, order1),
             second: Some(to_sort_by_component(&sort_field2.field_name, order2)),
@@ -1598,8 +1597,8 @@ mod tests {
                                 )
                             })
                             .collect::<Vec<_>>();
-                        eprintln!("expected: {:#?}", expected_docids);
-                        eprintln!("got: {:#?}", got_docids);
+                        eprintln!("expected: {expected_docids:#?}");
+                        eprintln!("got: {got_docids:#?}");
                         panic!("mismatch ordering for \"{sort_str}\":{slice_len}");
                     }
                 }

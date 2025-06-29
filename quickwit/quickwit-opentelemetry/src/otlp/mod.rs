@@ -177,6 +177,7 @@ fn is_zero(count: &u32) -> bool {
     *count == 0
 }
 
+#[allow(clippy::result_large_err)]
 pub fn extract_otel_traces_index_id_patterns_from_metadata(
     metadata: &tonic::metadata::MetadataMap,
 ) -> Result<Vec<String>, Status> {
@@ -205,6 +206,7 @@ pub fn extract_otel_traces_index_id_patterns_from_metadata(
     Ok(index_id_patterns)
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) fn extract_otel_index_id_from_metadata(
     metadata: &tonic::metadata::MetadataMap,
     otel_signal: OtelSignal,
@@ -247,8 +249,7 @@ async fn ingest_doc_batch_v2(
     let num_responses = response.successes.len() + response.failures.len();
     if num_responses != 1 {
         return Err(IngestServiceError::Internal(format!(
-            "expected a single failure or success, got {}",
-            num_responses
+            "expected a single failure or success, got {num_responses}"
         )));
     }
     if response.successes.pop().is_some() {

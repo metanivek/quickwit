@@ -76,6 +76,9 @@ pub fn build_index_command() -> Command {
                 arg!(--"index-config" <INDEX_CONFIG> "Location of the index config file.")
                     .display_order(2)
                     .required(true),
+                arg!(--"create" "Create the index if it does not already exists.")
+                    .display_order(3)
+                    .required(false),
             ])
         )
         .subcommand(
@@ -212,6 +215,7 @@ pub struct UpdateIndexArgs {
     pub client_args: ClientArgs,
     pub index_id: IndexId,
     pub index_config_uri: Uri,
+    pub create: bool,
     pub assume_yes: bool,
 }
 
@@ -335,12 +339,14 @@ impl IndexCliCommand {
             .remove_one::<String>("index-config")
             .map(|uri| Uri::from_str(&uri))
             .expect("`index-config` should be a required arg")?;
+        let create = matches.get_flag("create");
         let assume_yes = matches.get_flag("yes");
 
         Ok(Self::Update(UpdateIndexArgs {
             index_id,
             client_args,
             index_config_uri,
+            create,
             assume_yes,
         }))
     }
@@ -548,7 +554,12 @@ pub async fn update_index_cli(args: UpdateIndexArgs) -> anyhow::Result<()> {
     }
     qw_client
         .indexes()
-        .update(&args.index_id, &index_config_str, config_format)
+        .update(
+            &args.index_id,
+            &index_config_str,
+            config_format,
+            args.create,
+        )
         .await?;
     println!("{} Index successfully updated.", "✔".color(GREEN_COLOR));
     Ok(())
@@ -686,7 +697,7 @@ fn display_timestamp(timestamp: &Option<i64>) -> String {
             let datetime = chrono::DateTime::from_timestamp_millis(*timestamp * 1000)
                 .map(|datetime| datetime.format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or_else(|| "Invalid timestamp!".to_string());
-            format!("{} (Timestamp: {})", datetime, timestamp)
+            format!("{datetime} (Timestamp: {timestamp})")
         }
         _ => "Timestamp does not exist for the index.".to_string(),
     }
@@ -785,14 +796,12 @@ impl IndexStats {
             tables.push(size_stats_table);
         }
 
-        let table = Table::builder(tables.into_iter().map(|table| table.to_string()))
+        Table::builder(tables.into_iter().map(|table| table.to_string()))
             .build()
             .with(Modify::new(Segment::all()).with(Alignment::center_vertical()))
             .with(Disable::row(FirstRow))
             .with(Style::empty())
-            .to_string();
-
-        table
+            .to_string()
     }
 }
 
@@ -1092,16 +1101,16 @@ pub async fn search_index(args: SearchIndexArgs) -> anyhow::Result<SearchRespons
             serde_json::from_str(&aggs_string).context("failed to deserialize aggregations")
         })
         .transpose()?;
-    let sort_by = args
-        .sort_by_score
-        .then_some(SortBy {
-            sort_fields: vec![SortField {
-                field_name: "_score".to_string(),
-                sort_order: SortOrder::Desc as i32,
-                sort_datetime_format: None,
-            }],
-        })
-        .unwrap_or_default();
+    let sort_fields = if args.sort_by_score {
+        vec![SortField {
+            field_name: "_score".to_string(),
+            sort_order: SortOrder::Desc as i32,
+            sort_datetime_format: None,
+        }]
+    } else {
+        Vec::new()
+    };
+    let sort_by = SortBy { sort_fields };
     let search_request = SearchRequestQueryString {
         query: args.query,
         aggs,

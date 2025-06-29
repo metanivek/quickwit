@@ -272,7 +272,7 @@ pub(super) mod jemalloc_profiled {
                     let ext = span.extensions();
                     if let Some(fields) = &ext.get::<FormattedFields<N>>() {
                         if !fields.is_empty() {
-                            write!(writer, "{{{}}}:", fields)?;
+                            write!(writer, "{{{fields}}}:")?;
                         }
                     }
                 }
@@ -285,11 +285,11 @@ pub(super) mod jemalloc_profiled {
             ctx.format_fields(writer.by_ref(), event)?;
             writeln!(writer)?;
 
-            // Print a backtrace to help idenify the callsite
+            // Print a backtrace to help identify the callsite
             backtrace::trace(|frame| {
                 backtrace::resolve_frame(frame, |symbol| {
                     if let Some(symbole_name) = symbol.name() {
-                        let _ = writeln!(writer, "{}", symbole_name);
+                        let _ = writeln!(writer, "{symbole_name}");
                     } else {
                         let _ = writeln!(writer, "symb failed");
                     }

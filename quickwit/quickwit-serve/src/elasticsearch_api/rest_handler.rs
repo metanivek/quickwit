@@ -21,7 +21,6 @@ use bytes::Bytes;
 use elasticsearch_dsl::search::Hit as ElasticHit;
 use elasticsearch_dsl::{HitsMetadata, ShardStatistics, Source, TotalHits, TotalHitsRelation};
 use futures_util::StreamExt;
-use hyper::StatusCode;
 use itertools::Itertools;
 use quickwit_cluster::Cluster;
 use quickwit_common::truncate_str;
@@ -41,6 +40,7 @@ use quickwit_search::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use warp::hyper::StatusCode;
 use warp::reply::with_status;
 use warp::{Filter, Rejection};
 
@@ -302,6 +302,7 @@ pub fn es_compat_scroll_handler(
         .boxed()
 }
 
+#[allow(clippy::result_large_err)]
 fn build_request_for_es_api(
     index_id_patterns: Vec<String>,
     search_params: SearchQueryParams,
@@ -418,6 +419,7 @@ fn is_doc_field(field: &quickwit_proto::search::SortField) -> bool {
     field.field_name == "_shard_doc" || field.field_name == "_doc"
 }
 
+#[allow(clippy::result_large_err)]
 fn partial_hit_from_search_after_param(
     search_after: Vec<serde_json::Value>,
     sort_order: &[quickwit_proto::search::SortField],
@@ -630,7 +632,7 @@ async fn es_compat_index_cat_indices(
         .map_err(|serde_error| {
             ElasticsearchError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to serialize cat indices response: {}", serde_error),
+                format!("Failed to serialize cat indices response: {serde_error}"),
                 None,
             )
         })?;
@@ -703,7 +705,7 @@ fn filter_source(
                 let path = if current_path.is_empty() {
                     key.to_string()
                 } else {
-                    format!("{}.{}", current_path, key)
+                    format!("{current_path}.{key}")
                 };
 
                 if include_paths.contains(&path) {
@@ -808,7 +810,7 @@ async fn es_compat_index_multi_search(
 ) -> Result<MultiSearchResponse, ElasticsearchError> {
     let mut search_requests = Vec::new();
     let str_payload = from_utf8(&payload)
-        .map_err(|err| SearchError::InvalidQuery(format!("invalid UTF-8: {}", err)))?;
+        .map_err(|err| SearchError::InvalidQuery(format!("invalid UTF-8: {err}")))?;
     let mut payload_lines = str_lines(str_payload);
 
     while let Some(line) = payload_lines.next() {
@@ -827,8 +829,7 @@ async fn es_compat_index_multi_search(
         for index in &request_header.index {
             validate_index_id_pattern(index, true).map_err(|err| {
                 SearchError::InvalidArgument(format!(
-                    "request header contains an invalid index: {}",
-                    err
+                    "request header contains an invalid index: {err}"
                 ))
             })?;
         }
@@ -914,7 +915,7 @@ async fn es_scroll(
     };
     let scroll_ttl_secs: Option<u32> = if let Some(scroll_ttl) = scroll_query_params.scroll {
         let scroll_ttl_duration = humantime::parse_duration(&scroll_ttl)
-            .map_err(|_| SearchError::InvalidArgument(format!("Scroll invalid: {}", scroll_ttl)))?;
+            .map_err(|_| SearchError::InvalidArgument(format!("Scroll invalid: {scroll_ttl}")))?;
         Some(scroll_ttl_duration.as_secs() as u32)
     } else {
         None
@@ -991,6 +992,7 @@ fn convert_to_es_stats_response(
     ElasticsearchStatsResponse { _all, indices }
 }
 
+#[allow(clippy::result_large_err)]
 fn convert_to_es_search_response(
     resp: SearchResponse,
     append_shard_doc: bool,
@@ -1057,8 +1059,8 @@ pub(crate) fn str_lines(body: &str) -> impl Iterator<Item = &str> {
 
 #[cfg(test)]
 mod tests {
-    use hyper::StatusCode;
     use quickwit_proto::search::SplitSearchError;
+    use warp::hyper::StatusCode;
 
     use super::{partial_hit_from_search_after_param, *};
 

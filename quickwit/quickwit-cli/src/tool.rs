@@ -415,7 +415,7 @@ pub async fn local_ingest_docs_cli(args: LocalIngestDocsArgs) -> anyhow::Result<
         .map(|vrl_script| TransformConfig::new(vrl_script, None));
     let source_config = SourceConfig {
         source_id: CLI_SOURCE_ID.to_string(),
-        num_pipelines: NonZeroUsize::new(1).expect("1 is always non-zero."),
+        num_pipelines: NonZeroUsize::MIN,
         enabled: true,
         source_params,
         transform_config,
@@ -560,7 +560,7 @@ pub async fn local_search_cli(args: LocalSearchArgs) -> anyhow::Result<()> {
         single_node_search(search_request, metastore, storage_resolver).await?;
     let search_response_rest = SearchResponseRest::try_from(search_response)?;
     let search_response_json = serde_json::to_string_pretty(&search_response_rest)?;
-    println!("{}", search_response_json);
+    println!("{search_response_json}");
     Ok(())
 }
 
@@ -605,7 +605,7 @@ pub async fn merge_cli(args: MergeArgs) -> anyhow::Result<()> {
             index_id: args.index_id,
             source_config: SourceConfig {
                 source_id: args.source_id,
-                num_pipelines: NonZeroUsize::new(1).unwrap(),
+                num_pipelines: NonZeroUsize::MIN,
                 enabled: true,
                 source_params: SourceParams::Vec(VecSourceParams::default()),
                 transform_config: None,

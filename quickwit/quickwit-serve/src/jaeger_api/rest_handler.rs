@@ -15,7 +15,6 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use hyper::StatusCode;
 use itertools::Itertools;
 use quickwit_jaeger::JaegerService;
 use quickwit_proto::jaeger::storage::v1::{
@@ -26,6 +25,7 @@ use quickwit_proto::tonic;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::error;
+use warp::hyper::StatusCode;
 use warp::{Filter, Rejection};
 
 use super::model::build_jaeger_traces;
@@ -177,7 +177,7 @@ async fn jaeger_services(
         .await
         .map_err(|error| JaegerError {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: format!("failed to fetch services: {}", error),
+            message: format!("failed to fetch services: {error}"),
         })?;
     Ok(JaegerResponseBody::<Vec<String>> {
         data: get_services_response.services,
