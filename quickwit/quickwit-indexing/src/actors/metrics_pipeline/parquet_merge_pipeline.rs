@@ -38,9 +38,11 @@ use quickwit_actors::{
 use quickwit_common::KillSwitch;
 use quickwit_common::pubsub::EventBroker;
 use quickwit_common::temp_dir::TempDirectory;
+use quickwit_metastore::{ListParquetSplitsRequestExt, ListParquetSplitsResponseExt};
 use quickwit_parquet_engine::merge::policy::ParquetMergePolicy;
 use quickwit_parquet_engine::split::ParquetSplitMetadata;
-use quickwit_proto::metastore::MetastoreServiceClient;
+use quickwit_proto::metastore::{MetastoreService, MetastoreServiceClient};
+use quickwit_proto::types::IndexUid;
 use quickwit_storage::Storage;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info, instrument};
@@ -52,6 +54,7 @@ use super::{METRICS_PUBLISHER_NAME, ParquetUploader};
 use crate::actors::pipeline_shared::wait_duration_before_retry;
 use crate::actors::publisher::DisconnectMergePlanner;
 use crate::actors::{MergeSchedulerService, Publisher, Sequencer, UploaderType};
+use crate::models::MergeStatistics;
 
 /// Limits concurrent Parquet merge pipeline spawns to avoid overwhelming the
 /// metastore. This is a separate semaphore from the Tantivy merge pipeline's.
@@ -106,13 +109,12 @@ pub struct ParquetMergePipeline {
     /// the new planner instance.
     merge_planner_mailbox: Mailbox<ParquetMergePlanner>,
     merge_planner_inbox: Inbox<ParquetMergePlanner>,
+    previous_generations_statistics: MergeStatistics,
+    statistics: MergeStatistics,
     handles_opt: Option<ParquetMergePipelineHandles>,
     /// Child kill switch — killing this kills all actors in the pipeline
     /// without affecting the supervisor itself.
     kill_switch: KillSwitch,
-    /// Increments on each spawn. Used for log correlation.
-    generation: usize,
-    num_spawn_attempts: usize,
     /// Immature splits passed to the planner on first spawn. On subsequent
     /// spawns (after crash/respawn), the planner starts empty and picks up
     /// new splits from the feedback loop.
@@ -122,9 +124,11 @@ pub struct ParquetMergePipeline {
 
 #[async_trait]
 impl Actor for ParquetMergePipeline {
-    type ObservableState = ();
+    type ObservableState = MergeStatistics;
 
-    fn observable_state(&self) {}
+    fn observable_state(&self) -> Self::ObservableState {
+        self.statistics.clone()
+    }
 
     fn name(&self) -> String {
         "ParquetMergePipeline".to_string()
@@ -152,10 +156,10 @@ impl ParquetMergePipeline {
             );
         Self {
             params,
+            previous_generations_statistics: MergeStatistics::default(),
+            statistics: MergeStatistics::default(),
             handles_opt: None,
             kill_switch: KillSwitch::default(),
-            generation: 0,
-            num_spawn_attempts: 0,
             merge_planner_inbox,
             merge_planner_mailbox,
             initial_immature_splits_opt,
@@ -204,7 +208,7 @@ impl ParquetMergePipeline {
         }
         if !failure_or_unhealthy_actors.is_empty() {
             error!(
-                generation = self.generation,
+                generation = self.generation(),
                 healthy_actors = ?healthy_actors,
                 failed_or_unhealthy_actors = ?failure_or_unhealthy_actors,
                 success_actors = ?success_actors,
@@ -214,13 +218,13 @@ impl ParquetMergePipeline {
         }
         if healthy_actors.is_empty() {
             info!(
-                generation = self.generation,
+                generation = self.generation(),
                 "parquet merge pipeline completed successfully"
             );
             return Health::Success;
         }
         debug!(
-            generation = self.generation,
+            generation = self.generation(),
             healthy_actors = ?healthy_actors,
             success_actors = ?success_actors,
             "parquet merge pipeline is running and healthy"
@@ -228,23 +232,27 @@ impl ParquetMergePipeline {
         Health::Healthy
     }
 
-    #[instrument(name="spawn_parquet_merge_pipeline", level="info", skip_all, fields(generation=self.generation))]
+    fn generation(&self) -> usize {
+        self.statistics.generation
+    }
+
+    #[instrument(name="spawn_parquet_merge_pipeline", level="info", skip_all, fields(generation=self.generation()))]
     async fn spawn_pipeline(&mut self, ctx: &ActorContext<Self>) -> anyhow::Result<()> {
         let _spawn_permit = ctx
             .protect_future(SPAWN_PIPELINE_SEMAPHORE.acquire())
             .await
             .expect("semaphore should not be closed");
 
-        self.num_spawn_attempts += 1;
+        self.statistics.num_spawn_attempts += 1;
         self.kill_switch = ctx.kill_switch().child();
 
         info!(
-            generation = self.generation,
+            generation = self.generation(),
             root_dir = %self.params.indexing_directory.path().display(),
             "spawning parquet merge pipeline"
         );
 
-        let immature_splits = self.initial_immature_splits_opt.take().unwrap_or_default();
+        let immature_splits = self.fetch_immature_splits(ctx).await?;
 
         // Spawn actors bottom-up: each actor's constructor needs a mailbox
         // for the actor below it in the chain, so we start from the publisher
@@ -288,7 +296,8 @@ impl ParquetMergePipeline {
             .spawn(merge_uploader);
 
         // 4. Merge executor
-        let merge_executor = ParquetMergeExecutor::new(merge_uploader_mailbox);
+        let merge_executor =
+            ParquetMergeExecutor::new(merge_uploader_mailbox, self.params.writer_config.clone());
         let (merge_executor_mailbox, merge_executor_handle) = ctx
             .spawn_actor()
             .set_kill_switch(self.kill_switch.clone())
@@ -323,7 +332,8 @@ impl ParquetMergePipeline {
             )
             .spawn(merge_planner);
 
-        self.generation += 1;
+        self.previous_generations_statistics = self.statistics.clone();
+        self.statistics.generation += 1;
         self.handles_opt = Some(ParquetMergePipelineHandles {
             merge_planner: merge_planner_handle,
             merge_split_downloader: merge_split_downloader_handle,
@@ -350,6 +360,28 @@ impl ParquetMergePipeline {
         }
     }
 
+    async fn perform_observe(&mut self) {
+        let Some(handles) = &self.handles_opt else {
+            return;
+        };
+        handles.merge_planner.refresh_observe();
+        handles.merge_uploader.refresh_observe();
+        handles.merge_publisher.refresh_observe();
+        let num_ongoing_merges = crate::metrics::INDEXER_METRICS
+            .ongoing_merge_operations
+            .get();
+        self.statistics = self
+            .previous_generations_statistics
+            .clone()
+            .add_actor_counters(
+                &handles.merge_uploader.last_observation(),
+                &handles.merge_publisher.last_observation(),
+            )
+            .set_generation(self.statistics.generation)
+            .set_num_spawn_attempts(self.statistics.num_spawn_attempts)
+            .set_ongoing_merges(usize::try_from(num_ongoing_merges).unwrap_or(0));
+    }
+
     async fn perform_health_check(
         &mut self,
         ctx: &ActorContext<Self>,
@@ -372,6 +404,56 @@ impl ParquetMergePipeline {
         }
         Ok(())
     }
+
+    /// Fetch published Parquet splits from the metastore for merge planning.
+    ///
+    /// On first spawn, uses the initial splits provided by the IndexingService
+    /// (avoids per-pipeline metastore queries when many pipelines start).
+    /// On subsequent spawns (after crash/respawn), queries the metastore
+    /// directly to recover splits that were in-flight during the crash.
+    ///
+    /// The planner's `record_splits_if_necessary` filters out mature splits,
+    /// so we don't need to filter here.
+    async fn fetch_immature_splits(
+        &mut self,
+        ctx: &ActorContext<Self>,
+    ) -> anyhow::Result<Vec<ParquetSplitMetadata>> {
+        // On first spawn, use the initial splits provided by the IndexingService.
+        if let Some(immature_splits) = self.initial_immature_splits_opt.take() {
+            return Ok(immature_splits);
+        }
+        // On subsequent spawns, query the metastore for published splits.
+        // Dispatch to the correct RPC based on whether this is a metrics or
+        // sketches index — they use separate Postgres tables.
+        let index_uid = self.params.index_uid.clone();
+        let query = quickwit_metastore::ListParquetSplitsQuery::for_index(index_uid.clone());
+        let is_sketch = quickwit_common::is_sketches_index(&index_uid.index_id);
+        let records = if is_sketch {
+            let list_request = quickwit_proto::metastore::ListSketchSplitsRequest::try_from_query(
+                index_uid.clone(),
+                &query,
+            )?;
+            let response = ctx
+                .protect_future(self.params.metastore.list_sketch_splits(list_request))
+                .await?;
+            response.deserialize_splits()?
+        } else {
+            let list_request = quickwit_proto::metastore::ListMetricsSplitsRequest::try_from_query(
+                index_uid.clone(),
+                &query,
+            )?;
+            let response = ctx
+                .protect_future(self.params.metastore.list_metrics_splits(list_request))
+                .await?;
+            response.deserialize_splits()?
+        };
+        let splits: Vec<ParquetSplitMetadata> = records.into_iter().map(|r| r.metadata).collect();
+        info!(
+            num_splits = splits.len(),
+            "fetched published parquet splits for merge planning on respawn"
+        );
+        Ok(splits)
+    }
 }
 
 #[async_trait]
@@ -383,6 +465,7 @@ impl Handler<SuperviseLoop> for ParquetMergePipeline {
         supervise_loop_token: SuperviseLoop,
         ctx: &ActorContext<Self>,
     ) -> Result<(), ActorExitStatus> {
+        self.perform_observe().await;
         self.perform_health_check(ctx).await?;
         ctx.schedule_self_msg(SUPERVISE_LOOP_INTERVAL, supervise_loop_token);
         Ok(())
@@ -475,6 +558,8 @@ impl Handler<Spawn> for ParquetMergePipeline {
 /// All actors in the pipeline share these resources via `Arc`/`Clone`.
 #[derive(Clone)]
 pub struct ParquetMergePipelineParams {
+    /// Index UID for metastore queries when re-seeding on respawn.
+    pub index_uid: IndexUid,
     /// Root temp directory for scratch files (downloads, merge output).
     pub indexing_directory: TempDirectory,
     /// Metastore client for staging/publishing merged splits and for
@@ -490,6 +575,10 @@ pub struct ParquetMergePipelineParams {
     pub merge_scheduler_service: Mailbox<MergeSchedulerService>,
     pub max_concurrent_split_uploads: usize,
     pub event_broker: EventBroker,
+    /// Parquet writer config for merge output (compression, page size, etc.).
+    /// Should match the ingest pipeline's writer config so merged files have
+    /// consistent compression.
+    pub writer_config: quickwit_parquet_engine::storage::ParquetWriterConfig,
 }
 
 #[cfg(test)]
@@ -507,7 +596,13 @@ mod tests {
     use super::*;
 
     fn make_pipeline_params(universe: &Universe) -> ParquetMergePipelineParams {
-        let mock_metastore = MockMetastoreService::new();
+        let mut mock_metastore = MockMetastoreService::new();
+        // Allow list_metrics_splits for respawn seeding (returns empty).
+        mock_metastore.expect_list_metrics_splits().returning(|_| {
+            Ok(quickwit_proto::metastore::ListMetricsSplitsResponse {
+                splits_serialized_json: Vec::new(),
+            })
+        });
         let storage = Arc::new(quickwit_storage::RamStorage::default());
         let merge_policy = Arc::new(ConstWriteAmplificationParquetMergePolicy::new(
             ParquetMergePolicyConfig {
@@ -520,6 +615,7 @@ mod tests {
             },
         ));
         ParquetMergePipelineParams {
+            index_uid: quickwit_proto::types::IndexUid::for_test("test-merge-index", 0),
             indexing_directory: TempDirectory::for_test(),
             metastore: MetastoreServiceClient::from_mock(mock_metastore),
             storage,
@@ -527,6 +623,7 @@ mod tests {
             merge_scheduler_service: universe.get_or_spawn_one(),
             max_concurrent_split_uploads: 4,
             event_broker: EventBroker::default(),
+            writer_config: quickwit_parquet_engine::storage::ParquetWriterConfig::default(),
         }
     }
 
